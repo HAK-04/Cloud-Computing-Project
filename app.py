@@ -1,25 +1,48 @@
 from flask import Flask, render_template, request, redirect, url_for
-import sqlite3
+import psycopg2
+import os
+from urllib.parse import urlparse
 
 app = Flask(__name__)
 
+# Configure database URL from environment variable
+DATABASE_URL = os.environ.get('DATABASE_URL')
+
+def get_conn():
+    """Establishes a PostgreSQL connection using the DATABASE_URL."""
+    if not DATABASE_URL:
+        raise ValueError("DATABASE_URL environment variable not set.")
+    url = urlparse(DATABASE_URL)
+    conn = psycopg2.connect(
+        host=url.hostname,
+        port=url.port,
+        database=url.path[1:],
+        user=url.username,
+        password=url.password
+    )
+    return conn
+
 # Initialize database
 def init_db():
-    conn = sqlite3.connect('tasks.db')
-    c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS tasks (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    title TEXT,
-                    description TEXT,
-                    deadline TEXT,
-                    team TEXT,
-                    person TEXT,
-                    status TEXT DEFAULT 'Pending'
-                )''')
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS tasks (
+            id SERIAL PRIMARY KEY,
+            title TEXT,
+            description TEXT,
+            deadline TEXT,
+            team TEXT,
+            person TEXT,
+            status TEXT DEFAULT 'Pending'
+        )
+    ''')
     conn.commit()
+    cur.close()
     conn.close()
 
-init_db()
+with app.app_context():
+    init_db()
 
 @app.route('/')
 def index():
@@ -34,21 +57,23 @@ def add_task():
     person = request.form['person']
     status = request.form['status']
 
-    conn = sqlite3.connect('tasks.db')
-    c = conn.cursor()
-    c.execute("INSERT INTO tasks (title, description, deadline, team, person, status) VALUES (?, ?, ?, ?, ?, ?)",
-              (title, description, deadline, team, person, status))
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("INSERT INTO tasks (title, description, deadline, team, person, status) VALUES (%s, %s, %s, %s, %s, %s)",
+                (title, description, deadline, team, person, status))
     conn.commit()
+    cur.close()
     conn.close()
 
     return redirect(url_for('view_tasks'))
 
 @app.route('/tasks')
 def view_tasks():
-    conn = sqlite3.connect('tasks.db')
-    c = conn.cursor()
-    c.execute("SELECT * FROM tasks")
-    tasks = c.fetchall()
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM tasks ORDER BY id DESC")
+    tasks = cur.fetchall()
+    cur.close()
     conn.close()
     return render_template('tasks.html', tasks=tasks)
 
@@ -57,10 +82,11 @@ def update_status():
     task_id = request.form['task_id']
     new_status = request.form['status']
 
-    conn = sqlite3.connect('tasks.db')
-    c = conn.cursor()
-    c.execute("UPDATE tasks SET status = ? WHERE id = ?", (new_status, task_id))
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("UPDATE tasks SET status = %s WHERE id = %s", (new_status, task_id))
     conn.commit()
+    cur.close()
     conn.close()
 
     return redirect(url_for('view_tasks'))
